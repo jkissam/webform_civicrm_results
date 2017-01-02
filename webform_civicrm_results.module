@@ -1,0 +1,115 @@
+<?php
+	
+/*
+ * Implements hook_menu().
+ */
+function webform_civicrm_results_menu() {
+  return array(
+    'webform_civicrm_results/%' => array(
+	  'title' => t('Webform Results'),
+      'page callback' => 'webform_civicrm_results_results',
+      'page arguments' => array(1),
+      'delivery callback' => 'drupal_json_output',
+      'access callback' =>'webform_civicrm_results_access',
+    ),
+  );
+}
+	
+/**
+ * Implements hook_civicrm_tabset().
+ *
+ * @link https://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_tabset
+ */
+function webform_civicrm_results_civicrm_tabset($tabsetName, &$tabs, $context) {
+	if ($tabsetName == 'civicrm/contact/view') {
+		$contactID = isset($context['contact_id']) ? $context['contact_id'] : 0;
+		$url = "/webform_civicrm_results/$contactID";
+		$tabs['webform_results'] = array(
+			'title' => ts('Webform Results'),
+			'url' => $url,
+			'valid' => 1,
+			'active' => 1,
+			'current' => false,
+		);
+	}
+}
+
+/**
+ * Callback function to check access
+ */
+function webform_civicrm_results_access() {
+	return user_access('access CiviCRM') && user_access('access all webform results');
+}
+
+/**
+ * Callback function to create tab content
+ */
+function webform_civicrm_results_results($cid) {
+	
+	$cid = intval($cid);
+	
+	// get uid from civicrm cid
+	civicrm_initialize();
+	$result = civicrm_api3('UFMatch', 'get', array(
+		'sequential' => 1,
+		'contact_id' => $cid,
+	));
+	if (!$result['is_error'] && $result['count']) {
+		$uid = isset($result['values'][0]['uf_id']) ? $result['values'][0]['uf_id'] : 0;
+	}
+	
+	$content = '';
+	
+	if ($uid) {
+		// SELECT `n`.`nid`,`n`.`title`,`ws`.`sid`,`ws`.`submitted` FROM `webform_submissions` AS `ws`,`node` AS `n` WHERE `ws`.`uid`={uid} AND `ws`.`nid`=`n`.`nid` ORDER BY `ws`.`submitted` DESC
+		$query = db_select('node', 'n');
+		$query->join('webform_submissions', 'ws', 'n.nid = ws.nid');
+		$query->condition('ws.uid', $uid, '=');
+		$query->fields('n',array('nid','title'));
+		$query->fields('ws',array('sid','submitted'));
+		$query->orderBy('ws.submitted', 'DESC');
+		$result = $query->execute();
+		$webform_results_user = '';
+		$even_odd = 'odd';
+		while($record = $result->fetchAssoc()) {
+			$webform_results_user .= '<tr class="crm-entity '.$even_odd.'"><td><a href="/node/'.$record['nid'].'/submission/'.$record['sid'].'">'.$record['title'].'</a></td><td>'.format_date($record['submitted']).'</td></tr>';
+			$even_odd = ($even_odd == 'even') ? 'odd' : 'even';
+   		}
+   		if ($webform_results_user) {
+			$content .= '<h3>'.t('Webforms submitted by this user').'</h3>';
+	   		$content .= '<table class="dataTable no-footer"><thead><tr><th class="ui-state-default">'.t('Webform').'</th><th class="ui-state-default">'.t('Date Submitted').'</th></tr></thead><tbody>' . $webform_results_user . '</tbody></table>';
+   		}
+	}
+	
+	
+	if (module_exists('webform_civicrm')) {
+		
+		// SELECT `n`.`nid`,`n`.`title`,`ws`.`sid`,`ws`.`submitted` FROM `webform_civicrm_submissions` AS `wcs`, `webform_submissions` AS `ws`, `node` AS `n` WHERE `wcs`.`sid`=`ws`.`sid` AND `ws`.`nid`=`n`.`nid` AND `wcs`.`contact_id` LIKE '%-{cid}-%' ORDER BY `ws`.`submitted` DESC
+		$query = db_select('node', 'n');
+		$query->join('webform_submissions', 'ws', 'n.nid = ws.nid');
+		$query->join('webform_civicrm_submissions', 'wcs', 'wcs.sid = ws.sid');
+		$query->condition('wcs.contact_id', "%-$cid-%", 'LIKE');
+		$query->fields('n',array('nid','title'));
+		$query->fields('ws',array('sid','submitted'));
+		$query->orderBy('ws.submitted', 'DESC');
+		$result = $query->execute();
+		$webform_results_contact = '';
+		$even_odd = 'odd';
+		while($record = $result->fetchAssoc()) {
+			$webform_results_contact .= '<tr class="crm-entity '.$even_odd.'"><td><a href="/node/'.$record['nid'].'/submission/'.$record['sid'].'">'.$record['title'].'</a></td><td>'.format_date($record['submitted']).'</td></tr>';
+			$even_odd = ($even_odd == 'even') ? 'odd' : 'even';
+   		}
+   		if ($webform_results_contact) {
+	   		$content .= '<h3>'.t('Webforms referencing this contact').'</h3>';
+	   		$content .= '<table class="dataTable no-footer"><thead><tr><th class="ui-state-default">'.t('Webform').'</th><th class="ui-state-default">'.t('Date Submitted').'</th></tr></thead><tbody>' . $webform_results_contact . '</tbody></table>';
+   		}
+	}
+	
+	if (!$content) {
+		$content = '<h3>'.t('Webform results').'</h3><p>'.t('No webform results associated with this contact').'</p>';
+	}
+	
+	$content = '<div class="view-content">' . $content . '</div>';
+	
+	return array('content' => $content);
+}
